@@ -94,6 +94,10 @@ func (c *Config) Read(path string) error {
 	c.fileName = path
 	c.data, err = toml.LoadFile(path)
 
+	if err != nil {
+		return err
+	}
+
 	update := make(map[interface{}]interface{})
 
 	c.ownerGuard.RLock()
