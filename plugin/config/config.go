@@ -3,17 +3,19 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/kernelschmelze/pkg/path"
+	manager "github.com/kernelschmelze/pkg/plugin/manager"
 	"github.com/kernelschmelze/pkg/plugin/watcher"
 
-	manager "github.com/kernelschmelze/pkg/plugin/manager"
+	"golang.org/x/crypto/blake2b"
 
 	"github.com/pelletier/go-toml"
-	"golang.org/x/crypto/blake2b"
 )
 
 var (
@@ -29,7 +31,8 @@ type Config struct {
 	owner      map[interface{}]interface{}
 	ownerGuard sync.RWMutex
 	hash       map[string][]byte
-	data       *toml.Tree
+	writeGuard sync.RWMutex
+	mu         sync.RWMutex
 }
 
 func NewConfig() *Config {
@@ -90,9 +93,7 @@ func RegisterPlugin(plugin interface{}, v interface{}) {
 
 func (c *Config) Read(path string) error {
 
-	var err error
-	c.fileName = path
-	c.data, err = toml.LoadFile(path)
+	tml, err := toml.LoadFile(path)
 
 	if err != nil {
 		return err
@@ -106,7 +107,7 @@ func (c *Config) Read(path string) error {
 
 		name := getName(plugin)
 
-		data := c.data.Get(name)
+		data := tml.Get(name)
 
 		if cfg, ok := data.(*toml.Tree); ok {
 
@@ -127,6 +128,10 @@ func (c *Config) Read(path string) error {
 
 	c.ownerGuard.RUnlock()
 
+	c.mu.Lock()
+	c.fileName = path
+	c.mu.Unlock()
+
 	for plugin, config := range update {
 		manager.GetManager().ConfigurePlugin(plugin, config)
 	}
@@ -137,6 +142,19 @@ func (c *Config) Read(path string) error {
 
 func (c *Config) Write(plugin interface{}, key string, value interface{}) error {
 
+	c.writeGuard.Lock()
+	defer c.writeGuard.Unlock()
+
+	c.mu.RLock()
+	configFile := c.fileName
+	c.mu.RUnlock()
+
+	tml, err := toml.LoadFile(configFile)
+
+	if err != nil {
+		return err
+	}
+
 	var path []string
 
 	name := getName(plugin)
@@ -146,14 +164,18 @@ func (c *Config) Write(plugin interface{}, key string, value interface{}) error 
 	path = append(path, name)
 	path = append(path, keys...)
 
-	c.data.SetPath(path, value)
+	tml.SetPath(path, value)
 
-	data, err := c.data.Marshal()
+	data, err := tml.Marshal()
 	if err != nil {
 		return err
 	}
 
-	err = ioutil.WriteFile(c.fileName, data, 0644)
+	tmp := configFile + ".tmp"
+	if err = ioutil.WriteFile(tmp, data, 0644); err == nil {
+		copyFile(c.fileName, configFile+".old")
+		err = os.Rename(tmp, configFile)
+	}
 
 	return err
 }
@@ -173,4 +195,24 @@ func getName(plugin interface{}) string {
 	}
 
 	return key
+}
+
+func copyFile(src string, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	if err != nil {
+		return err
+	}
+	return out.Close()
 }
