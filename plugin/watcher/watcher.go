@@ -61,9 +61,11 @@ func Add(file string, fn cbChanged) error {
 	return err
 }
 
-func Remove(file string) {
+func Remove(file string) error {
+
 	watcher := GetWatcher()
-	watcher.Remove(file)
+	err := watcher.Remove(file)
+	return err
 }
 
 func Close() {
@@ -119,14 +121,14 @@ func (w *Watcher) Add(file string, fn cbChanged) error {
 
 	if !w.running.IsSet() {
 		w.Start()
-
 	}
 
 	return nil
 }
 
-func (w *Watcher) Remove(file string) {
-	w.Watcher.Remove(file)
+func (w *Watcher) Remove(file string) error {
+	return w.Watcher.Remove(file)
+
 }
 
 func (w *Watcher) Start() {
@@ -136,34 +138,69 @@ func (w *Watcher) Start() {
 	}
 
 	w.wg.Add(1)
-	w.running.Set(true)
 
 	go func() {
+
+		w.running.Set(true)
 
 		defer func() {
 			w.running.Set(false)
 			w.wg.Done()
 		}()
 
+		idle := 60 * time.Minute
+		debounce := idle
 		watcher := w.Watcher
 		hash := make(map[string][]byte)
+		files := make(map[string]bool)
 
 		for {
 
 			select {
 
+			case <-time.After(debounce):
+
+				if len(files) == 0 {
+					break
+				}
+
+				for file := range files {
+
+					w.notifyGuard.RLock()
+					dispatch, exist := w.notify[file]
+					w.notifyGuard.RUnlock()
+
+					if !exist {
+						continue
+					}
+
+					// call registered callback function
+
+					for i := range dispatch {
+						if cb := dispatch[i]; cb != nil {
+							cb(file)
+						}
+					}
+
+				}
+
+				files = make(map[string]bool)
+
+				debounce = idle
+
 			case event, ok := <-watcher.Events:
+
 				if !ok {
 					return
 				}
 
 				w.notifyGuard.RLock()
-				dispatch, exist := w.notify[event.Name]
+				_, exist := w.notify[event.Name]
 				w.notifyGuard.RUnlock()
 
 				notify := event.Op&fsnotify.Write == fsnotify.Write
 
-				if (event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename) && exist {
+				if event.Op&fsnotify.Remove == fsnotify.Remove && exist {
 
 					if utils.Exists(event.Name) {
 
@@ -204,14 +241,8 @@ func (w *Watcher) Start() {
 					}
 				}
 
-				// call registered callback function
-
-				for i := range dispatch {
-					cb := dispatch[i]
-					if cb != nil {
-						cb(event.Name)
-					}
-				}
+				debounce = 500 * time.Millisecond
+				files[event.Name] = true
 
 			case _, ok := <-watcher.Errors:
 				if !ok {
