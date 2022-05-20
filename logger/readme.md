@@ -2,7 +2,7 @@
 package main
 
 import (
-	log "bitbucket.protel.net/projects/ifcv5/pkg/logger"
+	log "github.com/kernelschmelze/pkg/logger"
 )
 
 func main() {
