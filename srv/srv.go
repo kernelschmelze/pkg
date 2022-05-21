@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,10 @@ func (s *Srv) Add(config Config) error {
 
 	if index := strings.Index(addr, "://"); index >= 0 && index+3 <= len(addr) {
 		addr = addr[index+3:]
+	} else {
+		if _, err := strconv.ParseInt(add, 10, 0); err == nil {
+			addr = ":" + addr
+		}
 	}
 
 	if len(addr) == 0 {
