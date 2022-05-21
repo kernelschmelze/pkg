@@ -69,7 +69,7 @@ func (s *Srv) Add(config Config) error {
 	if index := strings.Index(addr, "://"); index >= 0 && index+3 <= len(addr) {
 		addr = addr[index+3:]
 	} else {
-		if _, err := strconv.ParseInt(add, 10, 0); err == nil {
+		if _, err := strconv.ParseInt(addr, 10, 0); err == nil {
 			addr = ":" + addr
 		}
 	}
